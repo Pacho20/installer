@@ -61,6 +61,98 @@ func TestValidateMachinePool(t *testing.T) {
 			valid: false,
 		},
 		{
+			name: "valid sdp bootVolume",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile:   "sdp",
+					SizeGiB:   500,
+					IOPS:      3000,
+					Bandwidth: 1000,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "valid sdp bootVolume beyond the first generation size limit",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "sdp",
+					SizeGiB: 16000,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "valid custom bootVolume with iops",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "custom",
+					SizeGiB: 100,
+					IOPS:    3000,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "invalid bootVolume profile",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "not-a-real-profile",
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "invalid sdp bootVolume size",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "sdp",
+					SizeGiB: 32001,
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "invalid first generation bootVolume size",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "general-purpose",
+					SizeGiB: 251,
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "invalid bootVolume size below minimum",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					SizeGiB: 5,
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "invalid iops on a profile that does not support it",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile: "general-purpose",
+					IOPS:    3000,
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "invalid bandwidth on a non-sdp profile",
+			machinepool: &ibmcloud.MachinePool{
+				BootVolume: &ibmcloud.BootVolume{
+					Profile:   "custom",
+					IOPS:      3000,
+					Bandwidth: 1000,
+				},
+			},
+			valid: false,
+		},
+		{
 			name: "valid dedicatedHosts 1",
 			machinepool: &ibmcloud.MachinePool{
 				Zones: validZones,

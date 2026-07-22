@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/IBM-Cloud/bluemix-go/crn"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/openshift/installer/pkg/types/ibmcloud"
@@ -33,6 +34,21 @@ func ValidateMachinePool(platform *ibmcloud.Platform, mp *ibmcloud.MachinePool, 
 	return allErrs
 }
 
+// Boot volume profiles supported by IBM Cloud VPC. The first generation
+// profiles share a common set of limits, while sdp is the second generation
+// profile with independently adjustable IOPS and bandwidth.
+const (
+	customProfile = "custom"
+	sdpProfile    = "sdp"
+
+	// Boot volume size limits, in GiB.
+	minBootVolumeSizeGiB    = 10
+	maxBootVolumeSizeGiB    = 250
+	maxSDPBootVolumeSizeGiB = 32000
+)
+
+var validBootVolumeProfiles = []string{"general-purpose", "5iops-tier", "10iops-tier", customProfile, sdpProfile}
+
 func validateBootVolume(bv *ibmcloud.BootVolume, path *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if bv.EncryptionKey != "" {
@@ -41,7 +57,42 @@ func validateBootVolume(bv *ibmcloud.BootVolume, path *field.Path) field.ErrorLi
 			allErrs = append(allErrs, field.Invalid(path.Child("encryptionKey"), bv.EncryptionKey, "encryptionKey is not a valid IBM CRN"))
 		}
 	}
+
+	if bv.Profile != "" && !sets.NewString(validBootVolumeProfiles...).Has(bv.Profile) {
+		allErrs = append(allErrs, field.NotSupported(path.Child("profile"), bv.Profile, validBootVolumeProfiles))
+	}
+
+	// The second generation sdp profile supports capacities well beyond the
+	// first generation limit.
+	maxSizeGiB := int64(maxBootVolumeSizeGiB)
+	if bv.Profile == sdpProfile {
+		maxSizeGiB = maxSDPBootVolumeSizeGiB
+	}
+	if bv.SizeGiB != 0 && (bv.SizeGiB < minBootVolumeSizeGiB || bv.SizeGiB > maxSizeGiB) {
+		allErrs = append(allErrs, field.Invalid(path.Child("sizeGiB"), bv.SizeGiB, fmt.Sprintf("size must be between %d and %d GiB for the %s profile", minBootVolumeSizeGiB, maxSizeGiB, bootVolumeProfileOrDefault(bv.Profile))))
+	}
+
+	// IOPS is only user configurable on the custom and sdp profiles; the other
+	// profiles derive it from the profile itself.
+	if bv.IOPS != 0 && bv.Profile != customProfile && bv.Profile != sdpProfile {
+		allErrs = append(allErrs, field.Invalid(path.Child("iops"), bv.IOPS, fmt.Sprintf("iops is only supported for the %s and %s profiles", customProfile, sdpProfile)))
+	}
+
+	// Bandwidth is exclusive to the second generation sdp profile.
+	if bv.Bandwidth != 0 && bv.Profile != sdpProfile {
+		allErrs = append(allErrs, field.Invalid(path.Child("bandwidth"), bv.Bandwidth, fmt.Sprintf("bandwidth is only supported for the %s profile", sdpProfile)))
+	}
+
 	return allErrs
+}
+
+// bootVolumeProfileOrDefault returns the profile used for error messages,
+// accounting for the profile being defaulted when unset.
+func bootVolumeProfileOrDefault(profile string) string {
+	if profile == "" {
+		return "general-purpose"
+	}
+	return profile
 }
 
 func validateDedicatedHosts(dhosts []ibmcloud.DedicatedHost, itype string, zones []string, path *field.Path) field.ErrorList {
