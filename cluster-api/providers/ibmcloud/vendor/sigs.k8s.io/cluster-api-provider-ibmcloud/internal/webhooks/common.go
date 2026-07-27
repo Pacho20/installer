@@ -17,12 +17,20 @@ limitations under the License.
 package webhooks
 
 import (
+	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-ibmcloud/api/v1beta2"
+)
+
+const (
+	// customProfile is the first-generation volume profile with user-defined iops.
+	customProfile = "custom"
+	// sdpProfile is the second-generation volume profile with independently adjustable iops and bandwidth.
+	sdpProfile = "sdp"
 )
 
 func defaultIBMPowerVSMachineSpec(spec *infrav1.IBMPowerVSMachineSpec) {
@@ -89,15 +97,29 @@ func validateBootVolume(spec infrav1.IBMVPCMachineSpec) field.ErrorList {
 		return allErrs
 	}
 
-	if spec.BootVolume.SizeGiB < 10 || spec.BootVolume.SizeGiB > 250 {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.bootVolume.sizeGiB"), spec, "valid Boot VPCVolume size is 10 - 250 GB"))
+	// Second-generation (sdp) boot volumes support larger capacities than first-generation profiles.
+	maxBootVolumeSizeGiB := int64(250)
+	if spec.BootVolume.Profile == sdpProfile {
+		maxBootVolumeSizeGiB = 32000
+	}
+	if spec.BootVolume.SizeGiB < 10 || spec.BootVolume.SizeGiB > maxBootVolumeSizeGiB {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.bootVolume.sizeGiB"), spec, fmt.Sprintf("valid Boot VPCVolume size is 10 - %d GB", maxBootVolumeSizeGiB)))
 	}
 
-	if spec.BootVolume.Iops != 0 && spec.BootVolume.Profile != "custom" {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.bootVolume.iops"), spec, "iops applicable only to volumes using a profile of type `custom`"))
+	if spec.BootVolume.Iops != 0 && !volumeProfileSupportsIops(spec.BootVolume.Profile) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.bootVolume.iops"), spec, "iops applicable only to volumes using a profile of type `custom` or `sdp`"))
+	}
+
+	if spec.BootVolume.Bandwidth != 0 && spec.BootVolume.Profile != sdpProfile {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.bootVolume.bandwidth"), spec, "bandwidth applicable only to volumes using a profile of type `sdp`"))
 	}
 
 	//TODO: Add validation for the spec.BootVolume.EncryptionKeyCRN to ensure its in proper IBM Cloud CRN format
 
 	return allErrs
+}
+
+// volumeProfileSupportsIops reports whether the volume profile allows the iops to be specified by the user.
+func volumeProfileSupportsIops(profile string) bool {
+	return profile == customProfile || profile == sdpProfile
 }

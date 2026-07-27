@@ -447,6 +447,10 @@ func (m *MachineScope) volumeToVPCVolumeAttachment(ctx context.Context, volume *
 		bootVolume.Volume.Iops = core.Int64Ptr(volume.Iops)
 	}
 
+	if volume.Bandwidth != 0 {
+		bootVolume.Volume.Bandwidth = core.Int64Ptr(volume.Bandwidth)
+	}
+
 	if volume.EncryptionKeyCRN != "" {
 		bootVolume.Volume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
 			CRN: core.StringPtr(volume.EncryptionKeyCRN),
