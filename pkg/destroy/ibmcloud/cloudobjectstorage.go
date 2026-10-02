@@ -3,6 +3,7 @@ package ibmcloud
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 	"github.com/pkg/errors"
@@ -12,6 +13,10 @@ const (
 	cosTypeName = "cos instance"
 	// reclamationReclaim will delete the resource, reclaim it.
 	reclamationReclaim = "reclaim"
+	// cosRequestCooldown is how long to wait before sending another delete or reclaim request for
+	// the same COS resource. IBM Cloud processes both asynchronously, so repeating them while one
+	// is still being processed can delay the deletion rather than speed it up.
+	cosRequestCooldown = 1 * time.Minute
 )
 
 // Resource ID collected via following command using IBM Cloud CLI:
@@ -106,7 +111,36 @@ func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 	return cloudResources{}.insert(result...), nil
 }
 
+// requestCooldownActive reports whether a request was already sent for the identifier within
+// cosRequestCooldown. When no recent request is found, the identifier is recorded as requested now.
+func (o *ClusterUninstaller) requestCooldownActive(identifier string) bool {
+	if o.cosRequestHistory == nil {
+		o.cosRequestHistory = map[string]time.Time{}
+	}
+	if requested, ok := o.cosRequestHistory[identifier]; ok && time.Since(requested) < cosRequestCooldown {
+		return true
+	}
+	o.cosRequestHistory[identifier] = time.Now()
+	return false
+}
+
 func (o *ClusterUninstaller) deleteCOSInstance(item cloudResource) error {
+	// The instance is already on its way out, so there is nothing left to request.
+	switch item.status {
+	case resourcecontrollerv2.ResourceInstanceStatePendingRemovalConst,
+		resourcecontrollerv2.ResourceInstanceStatePendingReclamationConst,
+		resourcecontrollerv2.ResourceInstanceStateRemovedConst:
+		o.Logger.Debugf("Waiting for COS instance %s to delete", item.name)
+		return nil
+	}
+
+	// The instance can still be listed as active while an earlier delete is being processed, so
+	// avoid sending the request again until the cooldown has passed.
+	if o.requestCooldownActive(fmt.Sprintf("delete/%s", item.id)) {
+		o.Logger.Debugf("Waiting for the delete request of COS instance %s to be processed", item.name)
+		return nil
+	}
+
 	o.Logger.Debugf("Deleting COS instance %s", item.name)
 	ctx, cancel := o.contextWithTimeout()
 	defer cancel()
@@ -143,6 +177,11 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 				return err
 			}
 			if reclamation != nil {
+				// Reclaiming is asynchronous as well, so give an earlier request time to complete.
+				if o.requestCooldownActive(fmt.Sprintf("reclaim/%s", *reclamation.ID)) {
+					o.Logger.Debugf("Waiting for the reclamation of COS instance %s to be processed", item.name)
+					continue
+				}
 				err = o.reclaimCOSInstanceReclamation(*reclamation.ID)
 				if err != nil {
 					return err

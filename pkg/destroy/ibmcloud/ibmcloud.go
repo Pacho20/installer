@@ -68,6 +68,10 @@ type ClusterUninstaller struct {
 	cosInstanceID   string
 	zoneID          string
 
+	// cosRequestHistory tracks when a delete or reclaim request was last sent for a COS resource,
+	// keyed by the request type and the resource ID.
+	cosRequestHistory map[string]time.Time
+
 	errorTracker
 	pendingItemTracker
 }
